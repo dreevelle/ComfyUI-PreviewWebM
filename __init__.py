@@ -181,11 +181,14 @@ class PreviewWebM(IO.ComfyNode):
                 ),
                 IO.Float.Input(
                     "fps",
-                    default=24.0,
+                    default=16.0,
                     min=0.01,
                     max=1000.0,
                     step=0.01,
-                    tooltip="Playback frame rate of the preview.",
+                    tooltip=(
+                        "Playback frame rate of the preview.\n"
+                        "Defaults to 16, which is what the Wan video models generate at."
+                    ),
                 ),
                 IO.Audio.Input(
                     "audio",

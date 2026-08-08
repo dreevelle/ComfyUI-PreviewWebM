@@ -21,7 +21,7 @@ stays wherever you already do it.
 | Input | Default | Notes |
 |---|---|---|
 | `images` | — | The image batch to play back. |
-| `fps` | `24.0` | Playback frame rate. Stored as an exact rational, so `23.976` stays `2997/125`. |
+| `fps` | `16.0` | Playback frame rate, defaulting to what the Wan video models generate at. Stored as an exact rational, so `23.976` stays `2997/125`. |
 | `audio` | *(optional)* | Muxed as Opus, trimmed to the length of the image batch. |
 | `quality` *(advanced)* | `balanced` | Encoder speed against picture quality. See below. |
 

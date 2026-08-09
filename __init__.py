@@ -28,6 +28,10 @@ whose implicit reformat picks swscale's defaults — BT.601 — and tags no matr
 at all. Chrome assumes BT.709 for HD, and that mismatch rotates saturated hues
 by up to 15%: pure green decodes as ``(0, 216, 0)``. Every preset converts to
 BT.709 full range and tags what it did.
+
+``web/resolution.js`` adds the one thing the frontend's video path leaves out —
+the ``width × height`` readout core draws under an image preview but not under a
+video one.
 """
 
 import contextlib
@@ -45,7 +49,12 @@ import folder_paths
 from comfy.utils import ProgressBar
 from comfy_api.latest import ComfyExtension, IO, UI
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
+
+# Registered by module attribute rather than [tool.comfy].web in pyproject.toml.
+# Setting both registers the same directory twice, under two different names,
+# and the frontend then loads every script in it twice.
+WEB_DIRECTORY = "./web"
 
 
 # ---------------------------------------------------------------------------

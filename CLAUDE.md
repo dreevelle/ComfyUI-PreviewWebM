@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single-file ComfyUI custom node package. All code lives in `__init__.py`;
-there is no build step, test suite, or linter config. The whole extension is one
-node, `PreviewWebM`, which encodes an image batch to a temporary VP9/WebM file
-and shows it as a scrubable video inside the node.
+A small ComfyUI custom node package: the node itself is all of `__init__.py`,
+plus one frontend script in `web/`. There is no build step, test suite, or
+linter config. The whole extension is one node, `PreviewWebM`, which encodes an
+image batch to a temporary VP9/WebM file and shows it as a scrubable video
+inside the node.
 
 The node is registered through ComfyUI's **V3 schema API**, not the legacy
 `NODE_CLASS_MAPPINGS` dict: `comfy_entrypoint()` returns a `ComfyExtension`
@@ -98,6 +99,48 @@ Four layers in `__init__.py`, in order:
    `unique_id`.
 4. **`PreviewWebM`** — schema and encode loop.
 
+`web/resolution.js` is the only frontend code; see below.
+
+## The frontend script
+
+`web/resolution.js` puts a `width × height` line under the video, the same
+readout core draws under an image preview. Core has one, but only on the image
+path: `renderPreview()` reserves a 15px band and `fillText`s the dimensions onto
+the *canvas*, while a video preview is a `<video>` in a DOM widget that
+`renderPreview` never touches.
+
+Registered with `WEB_DIRECTORY = "./web"` as a **module attribute**. Do not also
+set `[tool.comfy].web` in `pyproject.toml`: `load_custom_node` honours both, so
+the directory ends up in `EXTENSION_WEB_DIRS` twice under two names, and every
+script in it loads twice.
+
+The script leans on core frontend internals that are not public API. Everything
+it depends on, verified against frontend **1.50.4**, all in `useNodeVideo()`:
+
+- the node property `videoContainer`, assigned lazily on the first successful
+  load. There is no hook for it, so the script redefines the property with an
+  accessor and treats the assignment as the notification.
+- the container class `comfy-img-preview`, whose stylesheet sizes `video` to
+  `100%` of it. The caption goes below the video, so the script switches the
+  container to a nowrap column and gives the video `flex: 1 1 0`.
+- the DOM widget named `video-preview`, whose `computeLayoutSize` closes over
+  dimensions core recomputes on every load. Wrap that function to add the 15px;
+  do not replace it with fixed numbers or the video stops tracking node width.
+- `container.replaceChildren(video)` on every run, which deletes the caption.
+  A `MutationObserver` on the container is what puts it back, and it doubles as
+  the trigger for the very first caption.
+- the setting `Comfy.Node.AllowImageSizeDraw` ("Show width × height below the
+  image preview"), read through `app.ui.settings`. The video readout is the same
+  readout, so it obeys the same switch and stops reserving the band when off.
+
+Match the image readout exactly when changing any of this: `10px sans-serif`,
+`LiteGraph.NODE_TEXT_COLOR`, centred, a 15px band, and `×` (U+00D7), not `x`.
+
+Under **Vue nodes** (`Comfy.VueNodes.Enabled`) none of this runs and none of it
+is needed: that path renders a `VideoPreview` component which already shows the
+dimensions. `videoContainer` only exists in the LiteGraph canvas path, so the
+accessor simply never fires.
+
 ### Three ordering traps, all already hit
 
 - **The audio stream must be declared before the first packet is muxed.**
@@ -129,11 +172,12 @@ Recorded so they don't get "fixed" later:
   intermediate batch that passes through. Fanning out two links from the source
   costs one drag.
 - **`mute` drops the audio stream instead of muting the player.** Muting the
-  `<video>` element would be the more obvious reading, but the player is core's
-  widget and this package ships no frontend — there is no `web/` directory and
-  adding one to set a single attribute would be the largest structural change in
-  the repo. Dropping the stream also makes the muted encode strictly cheaper,
-  and the preview is throwaway, so nothing is lost by not carrying the track.
+  `<video>` element would be the more obvious reading. The original reason not
+  to was that the package shipped no frontend at all; `web/` exists now, so what
+  is left of the argument is that dropping the stream makes the muted encode
+  strictly cheaper, and the preview is throwaway, so nothing is lost by not
+  carrying the track. Note that a muted *player* would still be a per-node UI
+  state the workflow would have to remember.
 
 - **No `fingerprint_inputs` or `validate_inputs`.** Every input is either an
   upstream tensor already covered by the engine's cache key, or a widget.
@@ -166,6 +210,8 @@ the fallback worked — the matroska muxer only writes it for an alpha pix_fmt.
   core guards it the same way.
 - The output must stay a single file with a `.webm` extension in the temp
   directory. Each of those three is part of the frontend contract above.
+- `web/` has to reach the published archive — `.comfyignore` excludes only
+  dev-only files, so check the file list with `comfy node pack` if it changes.
 
 ## Releasing
 

@@ -29,6 +29,10 @@ stays wherever you already do it.
 No outputs — wire `images` in from the same socket that feeds your save node.
 It is an output node, so it runs on its own.
 
+The video's `width × height` is printed underneath it, matching the readout
+ComfyUI already draws under an image preview — including the
+**Show width × height below the image preview** setting, which turns both off.
+
 ## Performance
 
 libvpx-vp9's defaults suit neither end of what a preview is for — too slow for a
@@ -103,6 +107,8 @@ already ships it in practice.
   convert it with.
 - **Odd dimensions are fine.** Non-even widths and heights encode without any
   padding or cropping.
+- **The resolution line is the video's own**, read off the decoded stream rather
+  than off the batch, so it is what the player is actually showing you.
 - **One video per node.** The frontend displays only the first result, so this
   deliberately produces a single file.
 

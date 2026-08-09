@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-preview-webm"
 description = "Scrubable inline WebM video preview for ComfyUI image batches, with optional audio. Encodes VP9 into the temp directory and plays back in the node — nothing is saved."
-version = "1.0.0"
+version = "1.1.0"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"

@@ -15,10 +15,19 @@ animated-image widget is narrow: the UI payload must carry a truthy ``animated``
 satisfies both, and ``/view`` serves it through aiohttp's ``FileResponse``, which
 honours range requests — so the scrub bar actually seeks instead of reloading.
 
-The quality presets exist because libvpx-vp9's defaults are tuned for archival
-encodes, not for a file you look at once and throw away. On 60 frames of 1080p,
-the default settings take 1.9 s where the realtime path takes 0.3 s. Previews
-should not cost more than the sampling did.
+The quality presets exist because libvpx-vp9's defaults suit neither end of what
+a preview is for. On 60 frames of 1080p the defaults take 1.9 s where the
+realtime path takes 0.3 s — too slow when you only want to see whether the
+motion reads. At their default crf they also leave artifacts big enough to be
+mistaken for the model's — too lossy when the preview is what you are judging
+the model by. The presets span both ends: ``fast`` for a glance,
+``near-lossless`` for a verdict.
+
+Colour is converted and tagged explicitly rather than left to ``stream.encode``,
+whose implicit reformat picks swscale's defaults — BT.601 — and tags no matrix
+at all. Chrome assumes BT.709 for HD, and that mismatch rotates saturated hues
+by up to 15%: pure green decodes as ``(0, 216, 0)``. Every preset converts to
+BT.709 full range and tags what it did.
 """
 
 import contextlib
@@ -29,6 +38,7 @@ from fractions import Fraction
 
 import av
 import torch
+from av.video.reformatter import ColorRange, Colorspace
 from typing_extensions import override
 
 import folder_paths
@@ -41,13 +51,20 @@ __version__ = "1.0.0"
 # ---------------------------------------------------------------------------
 # Encoder presets
 # Maps the quality combo to (crf, deadline, cpu-used, keyframe interval in
-# seconds). Lower cpu-used means more search effort and a slower encode; the
-# keyframe interval sets how far a scrub-bar drag has to seek back.
+# seconds, chroma format). Lower cpu-used means more search effort and a slower
+# encode; the keyframe interval sets how far a scrub-bar drag has to seek back.
+#
+# Only near-lossless takes yuv444p. That is VP9 profile 1, which Chrome and
+# Firefox decode in software but nothing decodes in hardware, so the presets
+# meant for everyday use stay on profile 0. At crf 15 the point is to remove
+# every excuse for an artifact you might otherwise blame on the model, and 4:2:0
+# chroma is the largest one left once crf is that low.
 # ---------------------------------------------------------------------------
 _PRESETS = {
-    "fast":     ("40", "realtime", "8", 1),
-    "balanced": ("34", "good",     "5", 1),
-    "high":     ("28", "good",     "2", 2),
+    "fast":          ("40", "realtime", "8", 1, "yuv420p"),
+    "balanced":      ("34", "good",     "5", 1, "yuv420p"),
+    "high":          ("28", "good",     "2", 2, "yuv420p"),
+    "near-lossless": ("15", "good",     "4", 1, "yuv444p"),
 }
 
 
@@ -181,13 +198,13 @@ class PreviewWebM(IO.ComfyNode):
                 ),
                 IO.Float.Input(
                     "fps",
-                    default=16.0,
+                    default=24.0,
                     min=0.01,
                     max=1000.0,
                     step=0.01,
                     tooltip=(
                         "Playback frame rate of the preview.\n"
-                        "Defaults to 16, which is what the Wan video models generate at."
+                        "Defaults to 24, the native rate of most current video models."
                     ),
                 ),
                 IO.Audio.Input(
@@ -201,8 +218,8 @@ class PreviewWebM(IO.ComfyNode):
                 ),
                 IO.Combo.Input(
                     "quality",
-                    options=["fast", "balanced", "high"],
-                    default="balanced",
+                    options=["fast", "balanced", "high", "near-lossless"],
+                    default="near-lossless",
                     advanced=True,
                     tooltip=(
                         "Encoder speed against picture quality:\n"
@@ -211,7 +228,29 @@ class PreviewWebM(IO.ComfyNode):
                         "SaveWEBM uses.\n"
                         "  'high' — crf 28, more search effort. Use when you need to "
                         "judge fine detail.\n"
+                        "  'near-lossless' — crf 15 and 4:4:4 chroma. Encoder artifacts "
+                        "stay below what you can see, so what you are judging is the "
+                        "model and not the codec. Slowest and by far the largest, which "
+                        "costs nothing here because the file is discarded next run.\n"
                         "This only affects the throwaway preview, never anything you save."
+                    ),
+                ),
+                # Appended last on purpose. The frontend stores widget values as a
+                # positional array, so a widget inserted above an existing one
+                # shifts every saved value below it — putting this between 'fps'
+                # and 'quality' handed 'mute' the quality string, which is truthy,
+                # and silently dropped audio from every pre-existing workflow.
+                # New widgets go at the end.
+                IO.Boolean.Input(
+                    "mute",
+                    default=False,
+                    label_on="muted",
+                    label_off="audio on",
+                    tooltip=(
+                        "Leave the audio out of the preview without unwiring it.\n"
+                        "The track is skipped at encode time rather than silenced, so "
+                        "the file has no audio stream at all and the encode skips the "
+                        "resample too. Has no effect if nothing is wired to 'audio'."
                     ),
                 ),
             ],
@@ -221,13 +260,13 @@ class PreviewWebM(IO.ComfyNode):
 
     @classmethod
     def execute(cls, images, fps: float, audio: dict | None = None,
-                quality: str = "balanced") -> IO.NodeOutput:
+                mute: bool = False, quality: str = "near-lossless") -> IO.NodeOutput:
         if images is None or images.shape[0] == 0:
             raise ValueError("images is empty — there is nothing to preview.")
 
         num_frames, height, width = images.shape[0], images.shape[1], images.shape[2]
         save_alpha = images.shape[-1] == 4
-        crf, deadline, cpu_used, gop_seconds = _PRESETS[quality]
+        crf, deadline, cpu_used, gop_seconds, chroma = _PRESETS[quality]
         # An exact rational rate; a raw float drifts over a long batch.
         frame_rate = Fraction(round(fps * 1000), 1000)
 
@@ -236,16 +275,30 @@ class PreviewWebM(IO.ComfyNode):
         filename = f"previewwebm_{uuid.uuid4().hex[:12]}.webm"
         filepath = os.path.join(temp_dir, filename)
 
-        prepared_audio = _prepare_audio(audio, frame_rate, num_frames)
+        # Short-circuited before _prepare_audio rather than after, so muting also
+        # skips the resample — the one part of the audio path that can raise, and
+        # the reason mute doubles as an escape hatch when torchaudio is missing.
+        prepared_audio = None if mute else _prepare_audio(audio, frame_rate, num_frames)
 
         with av.open(filepath, mode="w") as container:
             stream = container.add_stream("libvpx-vp9", rate=frame_rate)
             stream.width = width
             stream.height = height
-            stream.pix_fmt = "yuva420p" if save_alpha else "yuv420p"
+            # Alpha rides in a separate VP9 channel and libvpx-vp9 offers only
+            # yuva420p — there is no yuva444p — so an RGBA batch cannot take the
+            # 4:4:4 path even on near-lossless.
+            pix_fmt = "yuva420p" if save_alpha else chroma
+            stream.pix_fmt = pix_fmt
             # libvpx-vp9 only honours crf as a pure quality target when the
             # bitrate is zeroed; otherwise it runs in constrained-quality mode.
             stream.bit_rate = 0
+            # These tags and the reformat in the encode loop below must describe
+            # the same transform. The decoder inverts using the tags, so tags
+            # that disagree with the conversion are worse than no tags at all.
+            stream.colorspace = Colorspace.ITU709      # matrix
+            stream.color_primaries = 1                 # BT.709, same as sRGB's
+            stream.color_trc = 1                       # BT.709 transfer
+            stream.color_range = ColorRange.JPEG       # full, no 16-235 squeeze
             stream.options = {
                 "crf": crf,
                 "deadline": deadline,
@@ -270,9 +323,16 @@ class PreviewWebM(IO.ComfyNode):
                     .to(device=torch.device("cpu"), dtype=torch.uint8)
                     .numpy()
                 )
-                for packet in stream.encode(
-                    av.VideoFrame.from_ndarray(array, format=pixel_format)
-                ):
+                # Converted here rather than implicitly inside stream.encode(),
+                # which would fall back to swscale's defaults: BT.601, and no
+                # matrix tag written. See the colour tags on the stream above.
+                frame = av.VideoFrame.from_ndarray(array, format=pixel_format).reformat(
+                    format=pix_fmt,
+                    dst_colorspace=Colorspace.ITU709,
+                    src_color_range=ColorRange.JPEG,  # rgb24/rgba are full range
+                    dst_color_range=ColorRange.JPEG,
+                )
+                for packet in stream.encode(frame):
                     container.mux(packet)
                 pbar.update(1)
             container.mux(stream.encode())

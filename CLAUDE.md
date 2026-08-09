@@ -73,20 +73,32 @@ nothing about real workloads.
 
 Four layers in `__init__.py`, in order:
 
-1. **`_PRESETS`** — maps the quality combo to crf, deadline, cpu-used and a
-   keyframe interval in seconds. Two settings are load-bearing and easy to
-   break: `stream.bit_rate = 0`, without which libvpx-vp9 treats `crf` as
-   constrained quality rather than a pure quality target; and `gop_size`, which
-   bounds how far a scrub-bar drag has to seek back.
+1. **`_PRESETS`** — maps the quality combo to crf, deadline, cpu-used, a keyframe
+   interval in seconds, and a chroma format. Three settings are load-bearing and
+   easy to break:
+   - `stream.bit_rate = 0`, without which libvpx-vp9 treats `crf` as constrained
+     quality rather than a pure quality target;
+   - `gop_size`, which bounds how far a scrub-bar drag has to seek back;
+   - the **colour tags and the explicit `reformat` in the encode loop, which must
+     agree**. The decoder inverts using the tags, so tags that disagree with the
+     conversion are worse than no tags at all. Do not "simplify" the `reformat`
+     away by passing the frame straight to `stream.encode()`: the implicit
+     reformat there falls back to swscale's defaults, which is BT.601 with no
+     matrix tag written — measured at up to a 15% hue error once a browser
+     assumes BT.709. `cpu-used` is *not* load-bearing for quality; at a fixed crf
+     it trades encode time for file size, and file size is free here.
 2. **Audio** — `_opus_sample_rate`, `_prepare_audio`, `_add_audio_stream`,
    `_mux_audio`. WebM accepts only Vorbis and Opus, so the AAC that core's MP4
    path uses is not an option. The rate ladder mirrors `AudioSaveHelper` in
-   `comfy_api/latest/_ui.py`.
+   `comfy_api/latest/_ui.py`. The `mute` widget short-circuits the whole layer by
+   forcing `prepared_audio` to `None`, which every function below it already
+   handles — keep that check *before* `_prepare_audio`, not after, so muting also
+   skips the resample that can raise on a missing `torchaudio`.
 3. **`_recycle`** — deletes the file this node wrote last run, keyed by
    `unique_id`.
 4. **`PreviewWebM`** — schema and encode loop.
 
-### Two ordering traps, both already hit
+### Three ordering traps, all already hit
 
 - **The audio stream must be declared before the first packet is muxed.**
   Adding it after the container has written its header leaves it with a zero
@@ -96,6 +108,15 @@ Four layers in `__init__.py`, in order:
 - **A fallback channel layout must narrow the data too.** PyAV validates the
   array's channel count against the layout, so naming `stereo` for a 3-channel
   waveform raises. `_prepare_audio` slices the waveform to match.
+- **New widgets go at the *end* of `inputs`, never in the middle.** The frontend
+  serialises widget values as a positional `widgets_values` array with no names
+  in it, so inserting a widget above an existing one re-points every saved value
+  below it. `mute` was first declared between `fps` and `quality`; saved
+  workflows stored `[fps, quality]`, so `mute` was handed the quality *string* —
+  truthy — and every pre-existing workflow silently lost its audio. Sockets
+  (`images`, `audio`) are not widgets and do not occupy slots, so only widget
+  order matters. Nothing in a schema-only test catches this; the check is that
+  the widget list's leading entries still match what old workflows stored.
 
 ### Deliberate design decisions
 
@@ -107,6 +128,13 @@ Recorded so they don't get "fixed" later:
   it mid-chain, where — being an output node — it would VP9-encode every
   intermediate batch that passes through. Fanning out two links from the source
   costs one drag.
+- **`mute` drops the audio stream instead of muting the player.** Muting the
+  `<video>` element would be the more obvious reading, but the player is core's
+  widget and this package ships no frontend — there is no `web/` directory and
+  adding one to set a single attribute would be the largest structural change in
+  the repo. Dropping the stream also makes the muted encode strictly cheaper,
+  and the preview is throwaway, so nothing is lost by not carrying the track.
+
 - **No `fingerprint_inputs` or `validate_inputs`.** Every input is either an
   upstream tensor already covered by the engine's cache key, or a widget.
 - **No `prompt` / `extra_pnginfo` metadata.** This is a throwaway temp file, not
@@ -123,6 +151,11 @@ RGBA batches encode as `yuva420p` and the container is tagged `alpha_mode=1`.
 VP9 alpha rides in a separate BlockAdditional channel, so **a decoder will
 report the main plane as `yuv420p`** — that is expected, not a regression. Assert
 on the `alpha_mode` metadata tag, not on the decoded pixel format.
+
+This also means **RGBA never takes the 4:4:4 path**, even on `near-lossless`:
+libvpx-vp9 offers `yuva420p` and there is no `yuva444p`, so `pix_fmt` falls back
+to 4:2:0 whenever `save_alpha` is set. The `alpha_mode` tag is itself the proof
+the fallback worked — the matroska muxer only writes it for an alpha pix_fmt.
 
 ## Conventions
 

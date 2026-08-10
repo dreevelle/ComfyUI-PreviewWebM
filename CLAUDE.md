@@ -230,6 +230,23 @@ published archive. `comfy node validate` runs the registry's checks locally and
 `comfy node pack` produces the exact archive that would be uploaded — inspect it
 before releasing if the file list may have changed.
 
+`assets/icon.png` is the registry icon, pointed at by `[tool.comfy] Icon` as a
+raw GitHub URL on `main`. The registry stores the *URL*, not the bytes, so the
+asset has to be on `main` before the version bump that references it — and
+because `icon` is node-level metadata written as a side effect of publishing a
+version, a changed icon only reaches the registry on the next bump. It is the
+shared `dreevelle` mark, regenerated from the brand original at the registry's
+400×400 square maximum:
+
+```bash
+magick ~/Projects/alora/dev/assets/brand/dreevelle_pfp.png \
+  -colorspace RGB -filter Lanczos -resize 400x400 -colorspace sRGB -strip \
+  assets/icon.png
+oxipng -o max --strip safe assets/icon.png
+```
+
+Downscale in linear light as above; the naive sRGB-space resize dulls the glow.
+
 Check what's live:
 
 ```bash

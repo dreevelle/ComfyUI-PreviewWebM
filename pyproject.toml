@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-preview-webm"
 description = "Scrubable inline WebM video preview for ComfyUI image batches, with optional audio. Encodes VP9 into the temp directory and plays back in the node — nothing is saved."
-version = "1.1.0"
+version = "1.1.1"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,4 +14,4 @@ Repository = "https://github.com/dreevelle/ComfyUI-PreviewWebM"
 [tool.comfy]
 PublisherId = "dreevelle"
 DisplayName = "ComfyUI-PreviewWebM"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/dreevelle/ComfyUI-PreviewWebM/main/assets/icon.png"

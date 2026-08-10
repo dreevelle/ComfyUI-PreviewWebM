@@ -49,7 +49,7 @@ import folder_paths
 from comfy.utils import ProgressBar
 from comfy_api.latest import ComfyExtension, IO, UI
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 # Registered by module attribute rather than [tool.comfy].web in pyproject.toml.
 # Setting both registers the same directory twice, under two different names,

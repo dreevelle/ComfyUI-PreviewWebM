@@ -20,10 +20,25 @@ whose `get_node_list()` yields `IO.ComfyNode` subclasses. Inputs are declared in
 
 - ComfyUI checkout: `/home/dreevelle/comfy/ComfyUI`
 - Python venv (has `av`, `torch`, `torchaudio`): `/home/dreevelle/comfy-env/bin/python`
-- During development this tree is symlinked into
-  `/home/dreevelle/comfy/ComfyUI/custom_nodes/ComfyUI-PreviewWebM`, so edits are
-  live after a server restart. A registry install would instead be an
-  independent copy under the registry id `comfyui-preview-webm`.
+- The package is published, and `ComfyUI/custom_nodes/comfyui-preview-webm`
+  (lowercase, the registry id) is a **ComfyUI-Manager install** that tracks
+  registry releases. This working tree is not wired into ComfyUI.
+
+To test a change before releasing it, symlink this tree in under its CamelCase
+name so it doesn't collide with the Manager install:
+
+```bash
+ln -sfn /home/dreevelle/Projects/ComfyUI-PreviewWebM \
+        /home/dreevelle/comfy/ComfyUI/custom_nodes/ComfyUI-PreviewWebM
+```
+
+**Remove that symlink before doing anything in ComfyUI-Manager for this
+package.** Manager's remove/replace path does `shutil.rmtree` on the *resolved*
+path, so it deletes the symlink target's contents instead of unlinking — on
+2026-08-09 that wiped a sibling package's working tree, `.git` included, and it
+had to be restored by re-cloning. Commit and push before any Manager operation,
+and never leave a symlinked dev copy in place while installing or updating the
+published version.
 
 Run ComfyUI:
 

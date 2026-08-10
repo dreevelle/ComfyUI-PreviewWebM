@@ -231,21 +231,36 @@ published archive. `comfy node validate` runs the registry's checks locally and
 before releasing if the file list may have changed.
 
 `assets/icon.png` is the registry icon, pointed at by `[tool.comfy] Icon` as a
-raw GitHub URL on `main`. The registry stores the *URL*, not the bytes, so the
-asset has to be on `main` before the version bump that references it — and
-because `icon` is node-level metadata written as a side effect of publishing a
-version, a changed icon only reaches the registry on the next bump. It is the
-shared `dreevelle` mark, regenerated from the brand original at the registry's
-400×400 square maximum:
+raw GitHub URL on `main`. The registry stores the *URL*, not the bytes, and the
+Manager hotlinks it, so **replacing this file on `main` restyles every card with
+no republish**. Only changing the URL needs a version bump, because `icon` is
+node-level metadata written as a side effect of publishing a version.
+
+The background is **transparent on purpose**. The frontend's `PackBanner` draws
+the icon twice into a 7:3 box — once as a backdrop, `bg-cover` plus `blur(10px)`
+at `opacity-30`, and once `object-contain` on top. An opaque icon therefore shows
+as a hard rectangle: `bg-cover` crops to the centre and zooms ~2.3x, so it samples
+mostly glow and lifts the surround to ~47, while the contained copy still shows
+the icon's own near-black corners at ~17. Deriving alpha from luminance removes
+the edge completely, and it is the right derivation because the artwork is
+additive glow on near-black. The cost, accepted deliberately, is that the pale
+mark washes out on ComfyUI's light theme.
+
+Regenerate from the brand original, capped at the registry's 400x400 square
+maximum. Downscale in linear light; the naive sRGB-space resize dulls the ring
+stroke and blurs the bar separations inside the D:
 
 ```bash
 magick ~/Projects/alora/dev/assets/brand/dreevelle_pfp.png \
-  -colorspace RGB -filter Lanczos -resize 400x400 -colorspace sRGB -strip \
-  assets/icon.png
+  -colorspace RGB -filter Lanczos -resize 400x400 -colorspace sRGB \
+  \( +clone -grayscale Rec601Luma -level 7.45%,100% \) \
+  -alpha off -compose CopyOpacity -composite \
+  -background none -alpha Background -strip assets/icon.png
 oxipng -o max --strip safe assets/icon.png
 ```
 
-Downscale in linear light as above; the naive sRGB-space resize dulls the glow.
+Do not set `[tool.comfy] Banner`. `PackBanner` resolves `banner_url || icon`, so
+a banner *replaces* the mark rather than sitting behind it.
 
 Check what's live:
 
